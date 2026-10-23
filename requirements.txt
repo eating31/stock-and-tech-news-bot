@@ -1,0 +1,13 @@
+# HTTP 請求
+requests==2.32.3
+
+# HTML 解析（GitHub Trending 爬蟲）
+beautifulsoup4==4.12.3
+lxml==5.2.2
+
+# OpenAI-compatible client（呼叫 OmniRouter）
+# 注意：openai 套件在 3.x 版已重構，本專案使用 3.x
+openai>=3.37.0
+
+# 本地開發用：讀取 .env 檔案
+python-dotenv==1.0.1
