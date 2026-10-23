@@ -39,30 +39,37 @@ OMNI_API_KEY  = os.environ.get("OMNI_API_KEY", "")
 SEARCH_MODEL  = os.environ.get("SEARCH_MODEL", "gpt-4o")
 
 # ── Prompt ────────────────────────────────────────────────
-SUMMARIZE_PROMPT = """你是專業的台灣股市分析師助理。
+SUMMARIZE_PROMPT = """你是專業的台灣股市分析師助理，每天產生固定格式的財經情報。
 
-以下是今天（{today}）抓到的財經新聞原文列表，請從中挑選並整理 5～8 條最重要的新聞，
-分析每條新聞對台灣加權指數的潛在影響。
+以下是今天（{today}）的財經新聞原文，請依照規則整理後輸出 JSON。
 
 新聞資料：
 {articles}
 
-**輸出格式（只回傳 JSON，不要任何說明文字）：**
+**整理規則：**
+1. 從新聞中挑選 5～7 條，優先順序：直接影響台股 > 美股科技/半導體 > 總體經濟數據 > 其他
+2. market_sentiment 判斷標準：
+   - 偏多：正面消息 >= 負面消息 × 1.5，且主要指數預期上漲
+   - 偏空：負面消息 >= 正面消息 × 1.5，且主要指數預期下跌
+   - 中性：其餘情況
+3. finance_concept 選今日新聞中出現頻率最高或最關鍵的那一個概念，優先選一般讀者不熟悉的詞
+
+**輸出格式（只回傳 JSON，禁止在 JSON 前後加任何文字）：**
 {{
   "date": "{today}",
   "market_sentiment": "偏多 | 偏空 | 中性",
-  "summary": "一段話總結今日整體市場氣氛（50字內）",
+  "summary": "今日整體市場氣氛總結，40字以內，結尾說明對台股的預期方向",
   "finance_concept": {{
-    "term": "今日最相關的一個金融概念名詞（例如：那斯達克期貨、費城半導體指數、殖利率倒掛）",
-    "explanation": "用一句話解釋這個概念，以及它為什麼影響台灣股市（50字內，給非專業投資人看）"
+    "term": "一個金融名詞（繁體中文，6字以內）",
+    "explanation": "這個詞是什麼意思，以及為何牽動台股，50字以內，白話文，不用專業術語"
   }},
   "news": [
     {{
-      "title": "新聞標題（繁體中文）",
-      "source": "來源媒體名稱",
-      "summary": "一句話摘要（30字內，繁體中文）",
+      "title": "繁體中文標題，25字以內",
+      "source": "媒體名稱",
+      "summary": "發生了什麼事，25字以內",
       "impact": "正面 | 負面 | 中性",
-      "impact_reason": "對台灣大盤影響原因（20字內，繁體中文）"
+      "impact_reason": "為何影響台灣大盤，15字以內"
     }}
   ]
 }}"""
@@ -141,7 +148,7 @@ def _summarize_with_llm(articles: list[dict], today: str) -> dict:
             {"role": "user", "content": prompt},
         ],
         temperature=0.2,
-        max_tokens=2000,
+        max_tokens=3000,
     )
 
     raw = response.choices[0].message.content.strip()

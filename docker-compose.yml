@@ -1,38 +1,21 @@
-version: "3.9"
-
-# ── 說明 ────────────────────────────────────────────────────────────────────
-# 這個 compose 設計給 GCP Cloud Run Jobs 使用。
-# 每次 Cloud Scheduler 觸發時，整個 compose 啟動、執行完畢後自動停止。
-# 不會 24 小時常駐，費用幾乎為零。
-#
-# 服務說明：
-#   omni-router  : GitHub Copilot API proxy（你現有的 OmniRouter 服務）
-#   news-digest  : 本專案的 Python 查詢/推播腳本
-#
-# 執行方式：
-#   每日：docker compose run --rm news-digest python main_daily.py
-#   週報：docker compose run --rm news-digest python main_weekly.py
-# ────────────────────────────────────────────────────────────────────────────
-
 services:
 
   # ── OmniRouter：GitHub Copilot → OpenAI-compatible proxy ─────────────────
   omni-router:
-    image: ${OMNI_ROUTER_IMAGE:-ghcr.io/your-org/omni-router:latest}
-    # 若你有自己 build 的 image，改成 build: ./omni-router
-    restart: "no"          # Cloud Run Job 模式，不需要 restart
+    image: ${OMNI_ROUTER_IMAGE:-ghcr.io/diegosouzapw/omniroute:latest}
+    restart: "no"
     environment:
-      # OmniRouter 內部需要的環境變數由 OmniRouter 自己管理
-      # 依你的 OmniRouter 設定調整（通常是 GITHUB_TOKEN，在 OmniRouter 的設定裡填）
-      PORT: "8080"
+      STORAGE_ENCRYPTION_KEY: ${STORAGE_ENCRYPTION_KEY}
     ports:
-      - "8080:8080"
+      - "20128:20128"
+    volumes:
+      - omniroute-data:/app/data
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:20128/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 5s
-      retries: 10
-      start_period: 10s
+      retries: 12
+      start_period: 20s
     networks:
       - internal
 
@@ -44,33 +27,26 @@ services:
     restart: "no"
     depends_on:
       omni-router:
-        condition: service_healthy   # 等 OmniRouter 健康檢查通過才啟動
+        condition: service_healthy
     environment:
-      # OmniRouter endpoint（container 內部網路，不需要對外 port）
-      OMNI_BASE_URL: "http://omni-router:8080/v1"
+      # OmniRouter 預設跑在 20128
+      OMNI_BASE_URL: "http://omni-router:20128/v1"
       OMNI_API_KEY: ${OMNI_API_KEY}
-
-      # 使用的模型（透過 OmniRouter 路由）
-      SEARCH_MODEL: ${SEARCH_MODEL:-gpt-4o}
-
-      # NewsAPI key（財經新聞原始資料來源）
+      SEARCH_MODEL: ${SEARCH_MODEL:-auto/best-chat}
       NEWS_API_KEY: ${NEWS_API_KEY}
-
-      # Line Bot
       LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN}
       LINE_TARGET_IDS: ${LINE_TARGET_IDS}
-
-      # Python 環境
       PYTHONUNBUFFERED: "1"
       TZ: "Asia/Taipei"
     networks:
       - internal
-    # 預設執行每日任務；週報用 override 或 --entrypoint 指定
-    # Cloud Scheduler 呼叫時分別傳入 command：
-    #   每日：["python", "main_daily.py"]
-    #   週報：["python", "main_weekly.py"]
     command: ["python", "main_daily.py"]
 
 networks:
   internal:
     driver: bridge
+
+volumes:
+  omniroute-data:
+    external: true
+    name: news-digest_omniroute-data
