@@ -1,0 +1,146 @@
+
+name: News Digest
+
+on:
+  schedule:
+    - cron: "30 8 * * *"
+      timezone: "Asia/Taipei"
+    - cron: "0 8 * * 1"
+      timezone: "Asia/Taipei"
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "要執行的任務"
+        type: choice
+        options:
+          - daily
+          - weekly
+        default: daily
+        required: true
+
+permissions:
+  contents: read
+
+# 避免兩個排程同時操作同一個資源
+concurrency:
+  group: news-digest
+  cancel-in-progress: false
+
+jobs:
+  run-news-digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      STORAGE_ENCRYPTION_KEY: ${{ secrets.STORAGE_ENCRYPTION_KEY }}
+      OMNI_API_KEY: ${{ secrets.OMNI_API_KEY }}
+      NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+      LINE_TARGET_IDS: ${{ secrets.LINE_TARGET_IDS }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in \
+            STORAGE_ENCRYPTION_KEY \
+            OMNI_API_KEY \
+            NEWS_API_KEY \
+            LINE_CHANNEL_ACCESS_TOKEN \
+            LINE_TARGET_IDS
+          do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required secret: $name"
+              exit 1
+            fi
+          done
+
+      - name: Download SQLite from GCS
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          mkdir -p "$RUNNER_TEMP/omniroute"
+
+          gcloud storage cp \
+            gs://omniroute-key/storage.sqlite \
+            "$RUNNER_TEMP/omniroute/storage.sqlite"
+
+          test -s "$RUNNER_TEMP/omniroute/storage.sqlite"
+
+      - name: Prepare Docker volume
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker volume create news-digest_omniroute-data
+
+          docker run --rm \
+            -v news-digest_omniroute-data:/app/data \
+            -v "$RUNNER_TEMP/omniroute:/backup:ro" \
+            alpine:3.20 \
+            sh -c \
+            'cp /backup/storage.sqlite /app/data/storage.sqlite &&
+             chown -R 1000:1000 /app/data'
+
+      - name: Start OmniRouter
+        run: docker compose up -d omni-router
+
+
+      - name: Run daily or weekly task
+        shell: bash
+        env:
+          SCHEDULE_CRON: ${{ github.event.schedule }}
+          TASK_INPUT: ${{ inputs.task }}
+        run: |
+          set -euo pipefail
+
+          case "${SCHEDULE_CRON:-}" in
+            "0 8 * * 1")
+              TASK="weekly"
+              ;;
+            "30 8 * * *")
+              TASK="daily"
+              ;;
+            *)
+              TASK="${TASK_INPUT:-daily}"
+              ;;
+          esac
+
+          case "$TASK" in
+            daily)
+              docker compose run --rm news-digest \
+                python main_daily.py
+              ;;
+            weekly)
+              docker compose run --rm news-digest \
+                python main_weekly.py
+              ;;
+            *)
+              echo "::error::Unknown task: $TASK"
+              exit 1
+              ;;
+          esac
+
+      - name: Clean up
+        if: always()
+        shell: bash
+        run: |
+          docker compose down --remove-orphans || true
+          docker volume rm news-digest_omniroute-data || true
+          rm -rf "$RUNNER_TEMP/omniroute"
