@@ -67,6 +67,28 @@ jobs:
             fi
           done
 
+      - name: Validate WIF provider format
+        shell: bash
+        env:
+          WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        run: |
+          set -euo pipefail
+
+          case "$WIF_PROVIDER" in
+            projects/*/locations/global/workloadIdentityPools/*/providers/*)
+              echo "Provider resource name format: OK"
+              ;;
+            *)
+              echo "::error::Provider must start with projects/ and include /providers/PROVIDER_ID"
+              exit 1
+              ;;
+          esac
+
+          if [[ "$WIF_PROVIDER" == *"https://"* ]]; then
+            echo "::error::Remove the https:// prefix from the GitHub Secret"
+            exit 1
+          fi
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
