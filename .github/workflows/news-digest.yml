@@ -3,10 +3,8 @@ name: News Digest
 
 on:
   schedule:
-    - cron: "30 8 * * *"
-      timezone: "Asia/Taipei"
-    - cron: "0 8 * * 1"
-      timezone: "Asia/Taipei"
+    - cron: "30 0 * * *" # 台灣時間每天早上 08:30 (轉換為 UTC 00:30)
+    - cron: "0 0 * * 1" # 台灣時間每週一早上 08:00 (轉換為 UTC 00:00)
 
   workflow_dispatch:
     inputs:
